@@ -1,0 +1,22 @@
+{
+  "name": "hamster-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for HamsterBunker — launch rug-proof tokens on Robinhood Chain straight from Claude.",
+  "type": "module",
+  "main": "src/server.mjs",
+  "bin": {
+    "hamster-mcp": "src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs"
+  },
+  "keywords": ["mcp", "hamsterbunker", "robinhood-chain", "launchpad", "web3", "agent"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ethers": "^6.13.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
