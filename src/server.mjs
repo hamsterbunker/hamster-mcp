@@ -104,6 +104,41 @@ const TOOLS = [
       properties: { limit: { type: "number", description: "Max tokens to return (default 15, max 50)." } },
     },
   },
+  {
+    name: "discover_tokens",
+    description: "Discover tokens on Robinhood Chain launched through HamsterBunker, sorted by activity. Use to find what to trade.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sort: { type: "string", enum: ["trending", "new", "top", "graduating"], description: "trending = 24h volume, new = latest, top = market cap, graduating = closest to graduation. Default trending." },
+        limit: { type: "number", description: "Max tokens (default 15, max 50)." },
+      },
+    },
+  },
+  {
+    name: "token_trades",
+    description: "Recent on-chain trades (buys and sells) for a token, newest first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        address: { type: "string", description: "Token contract address" },
+        limit: { type: "number", description: "Max trades (default 20, max 50)." },
+      },
+      required: ["address"],
+    },
+  },
+  {
+    name: "trade_link",
+    description: "Get a ready-to-use buy or sell link for a token, routed to the venue that holds its liquidity (Uniswap for Uniswap tokens, the SushiSwap pool for Sushi tokens). Opening it executes a live on-chain swap with the token pre-selected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        address: { type: "string", description: "Token contract address" },
+        side: { type: "string", enum: ["buy", "sell"], description: "buy (ETH -> token) or sell (token -> ETH). Default buy." },
+      },
+      required: ["address"],
+    },
+  },
 ];
 
 const server = new Server({ name: "hamster-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
@@ -144,6 +179,45 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         marketCapUsd: +t.mcap, graduationPct: +t.grad_pct, volume24hUsd: +t.vol_24h,
         page: `https://hamsterbunker.com/token/${t.address}`,
       })));
+    }
+
+    if (name === "discover_tokens") {
+      const sort = ["trending", "new", "top", "graduating"].includes(args.sort) ? args.sort : "trending";
+      const limit = Math.min(50, Math.max(1, args.limit || 15));
+      const hidden = new Set((cfg.hidden || []).map((a) => a.toLowerCase()));
+      let q = `token_state?external=eq.false&limit=${limit + hidden.size + 5}&select=address,symbol,name,dex,price,mcap,liq,grad_pct,vol_24h,chg_24h`;
+      if (sort === "new") q += "&order=ord.desc";
+      else if (sort === "top") q += "&order=mcap.desc";
+      else if (sort === "graduating") q += "&grad_pct=gte.20&grad_pct=lt.100&order=grad_pct.desc";
+      else q += "&order=vol_24h.desc";
+      const rows = (await sbGet(cfg, q)).filter((t) => !hidden.has((t.address || "").toLowerCase())).slice(0, limit);
+      return ok(rows.map((t) => ({
+        symbol: t.symbol, name: t.name, address: t.address, dex: t.dex,
+        priceUsd: +t.price, marketCapUsd: +t.mcap, liquidityUsd: +t.liq,
+        graduationPct: +t.grad_pct, volume24hUsd: +t.vol_24h, change24hPct: +t.chg_24h,
+        page: `https://hamsterbunker.com/token/${t.address}`,
+      })));
+    }
+
+    if (name === "token_trades") {
+      const addr = (args.address || "").toLowerCase();
+      const limit = Math.min(50, Math.max(1, args.limit || 20));
+      const rows = await sbGet(cfg, `trades?address=eq.${addr}&order=ts.desc&limit=${limit}&select=side,usd,price,ts,tx`);
+      return ok(rows.map((x) => ({ side: x.side, usd: +x.usd, priceUsd: +x.price, at: new Date(+x.ts).toISOString(), tx: x.tx })));
+    }
+
+    if (name === "trade_link") {
+      const addr = (args.address || "").toLowerCase();
+      const rows = await sbGet(cfg, `token_state?address=eq.${addr}&select=dex,pool,symbol`);
+      if (!rows.length) return err("Token not found on HamsterBunker.");
+      const t = rows[0];
+      const side = args.side === "sell" ? "sell" : "buy";
+      const url = t.dex === "sushi"
+        ? `https://www.geckoterminal.com/robinhood/pools/${t.pool}`
+        : side === "sell"
+          ? `https://app.uniswap.org/swap?chain=robinhood&inputCurrency=${addr}&outputCurrency=NATIVE`
+          : `https://app.uniswap.org/swap?chain=robinhood&inputCurrency=NATIVE&outputCurrency=${addr}`;
+      return ok({ symbol: t.symbol, side, dex: t.dex, url, note: "Open to execute a live on-chain swap with the token pre-selected." });
     }
 
     if (name === "launch_token") {
