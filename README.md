@@ -22,9 +22,11 @@ liquidity, and burns the LP forever. One call, on-chain, rug-proof.
 | `recent_launches` | Recent tokens on the board | — |
 | `token_trades` | Recent on-chain buys and sells for a token | — |
 | `trade_link` | Ready-to-use buy/sell link routed to the right venue | — |
+| `safety_check` | Rug-check a token before trading — is the LP burned and locked? | — |
+| `buy_hbnk` | Buy $HBNK, HamsterBunker's own token, in one call | — |
 
-So you can tell Claude things like *"what's trending on HamsterBunker"*, *"show me the
-last trades for $RHMS"*, or *"give me a link to buy it"* — and, with a key, *"launch me
+So you can tell Claude things like *"what's trending on HamsterBunker"*, *"is this token safe
+to buy"*, *"buy me some HBNK"* — and, with a key, *"launch me
 a token"*.
 
 Addresses, bytecode, RPC and the public read key are pulled live from the

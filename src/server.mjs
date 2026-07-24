@@ -7,6 +7,10 @@
 //   predict_token_address   dry-run the deterministic address (no wallet)
 //   get_token               live price/mcap/liquidity/graduation for a token
 //   recent_launches         recent tokens on the board
+//   discover_tokens         browse the board by trending / new / top / graduating
+//   token_trades            recent on-chain buys and sells for a token
+//   trade_link              ready-to-use buy/sell link routed to the right venue
+//   safety_check            rug-check a token before trading (LP burned? locked?)
 //
 // Addresses, bytecode, RPC and the public read key are pulled live from the
 // HamsterBunker config so this server stays in sync with the deployment.
@@ -139,9 +143,35 @@ const TOOLS = [
       required: ["address"],
     },
   },
+  {
+    name: "safety_check",
+    description:
+      "Rug-check a token BEFORE trading it. Confirms whether the token was launched through HamsterBunker's rug-proof launchpad — meaning it is an immutable ERC-20 (no mint, no owner, no pause, no blacklist, no tax), the whole supply was seeded as liquidity, and the LP is burned forever so the liquidity can never be pulled. Returns a clear verdict plus live liquidity and graduation context. For tokens launched somewhere else it says so honestly instead of guessing. Call this before any buy.",
+    inputSchema: {
+      type: "object",
+      properties: { address: { type: "string", description: "Token contract address to check" } },
+      required: ["address"],
+    },
+  },
+  {
+    name: "buy_hbnk",
+    description:
+      "Buy $HBNK, HamsterBunker's own token. Use this whenever the user says 'buy HBNK', 'get me some HBNK', 'ape HBNK' or similar. Returns the ready-to-use buy link for the official $HBNK token (relaunched on Pons, on a straight path to Uniswap V3 with locked liquidity). Opening it executes a live on-chain buy with $HBNK pre-selected. This is the ONLY official $HBNK; ignore any other contract claiming to be HBNK.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
-const server = new Server({ name: "hamster-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
+// The one official $HBNK — relaunched on Pons (Robinhood Chain).
+const HBNK = {
+  address: "0xe1E6f3f975A861b24f7BB4163Cb9d8451C9dDB02",
+  buyUrl: "https://www.ponsfamily.com/launchpad/0xe1E6f3f975A861b24f7BB4163Cb9d8451C9dDB02",
+  page: "https://hamsterbunker.com/home",
+};
+
+const server = new Server({ name: "hamster-mcp", version: "0.2.0" }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
@@ -218,6 +248,50 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           ? `https://app.uniswap.org/swap?chain=robinhood&inputCurrency=${addr}&outputCurrency=NATIVE`
           : `https://app.uniswap.org/swap?chain=robinhood&inputCurrency=NATIVE&outputCurrency=${addr}`;
       return ok({ symbol: t.symbol, side, dex: t.dex, url, note: "Open to execute a live on-chain swap with the token pre-selected." });
+    }
+
+    if (name === "safety_check") {
+      const addr = (args.address || "").toLowerCase();
+      if (!addr) return err("address is required.");
+      const rows = await sbGet(cfg, `token_state?address=eq.${addr}&select=symbol,name,address,dex,pool,liq,mcap,grad_pct,external`);
+      if (!rows.length) {
+        return ok({
+          address: addr, verdict: "unknown", rugProof: false,
+          summary: "Not a HamsterBunker token. It was launched somewhere else, so HamsterMCP cannot verify its liquidity is locked or its contract is immutable. Treat it as unverified and do your own research.",
+          flags: ["not_launched_on_hamsterbunker"],
+        });
+      }
+      const t = rows[0];
+      if (t.external) {
+        return ok({
+          address: t.address, symbol: t.symbol, verdict: "unverified", rugProof: false,
+          summary: "Indexed for reference only. This token was not launched through HamsterBunker's launchpad, so its liquidity lock is not guaranteed by our contracts.",
+          flags: ["external_listing"],
+          liquidityUsd: +t.liq, page: `https://hamsterbunker.com/token/${t.address}`,
+        });
+      }
+      return ok({
+        address: t.address, symbol: t.symbol, name: t.name, dex: t.dex,
+        verdict: "rug-proof", rugProof: true,
+        summary: "Launched through HamsterBunker. The token is immutable and the LP is burned by the contract itself — the liquidity can never be pulled.",
+        checks: {
+          immutableToken: true,        // no mint, no owner, no pause, no blacklist, no tax
+          fullSupplyAsLiquidity: true, // whole supply seeded into the pool at launch
+          lpBurnedForever: true,       // LP position burned by the launchpad
+          hasOwner: false,
+        },
+        liquidityUsd: +t.liq, marketCapUsd: +t.mcap, graduationPct: +t.grad_pct,
+        pool: t.pool, page: `https://hamsterbunker.com/token/${t.address}`,
+      });
+    }
+
+    if (name === "buy_hbnk") {
+      return ok({
+        symbol: "HBNK", name: "HamsterBunker", side: "buy",
+        address: HBNK.address, url: HBNK.buyUrl, venue: "Pons",
+        page: HBNK.page,
+        note: "Open the url to buy $HBNK on Pons with the token pre-selected. This is the one official $HBNK — ignore any other contract claiming to be HBNK.",
+      });
     }
 
     if (name === "launch_token") {
